@@ -1,13 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import NewsCard from './components/NewsCard';
 import EntryForm from './components/EntryForm';
-import { INITIAL_NEWS, DEFAULT_BRANDS, NEWS_TYPES_LIST } from './constants';
+import { DEFAULT_BRANDS, NEWS_TYPES_LIST } from './constants';
 import { NewsItem, FilterState } from './types';
 
+// 简单的加载图标
+const LoadingIcon = () => (
+  <svg className="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+  </svg>
+);
+
 function App() {
-  const [news, setNews] = useState<NewsItem[]>(INITIAL_NEWS);
+  // 🟢 1. 状态初始化：默认为空数组，等待从云端加载
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [customBrands, setCustomBrands] = useState<string[]>(DEFAULT_BRANDS);
+  const [isSyncing, setIsSyncing] = useState(true); // 是否正在同步中
   
   // Date calculation for default filter (Last 30 days)
   const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -16,14 +26,71 @@ function App() {
   const [filters, setFilters] = useState<FilterState>({
     startDate: defaultStartDate,
     endDate: defaultEndDate,
-    selectedBrands: DEFAULT_BRANDS,
+    selectedBrands: [], // 默认全选/不选
     selectedTypes: NEWS_TYPES_LIST,
     searchQuery: ''
   });
 
   const [activeTab, setActiveTab] = useState<'feed' | 'entry'>('feed');
 
-  // Filter Logic
+  // 🟢 2. 核心逻辑：网页启动时，从 Vercel 云端下载数据
+  useEffect(() => {
+    const fetchCloudData = async () => {
+      try {
+        setIsSyncing(true);
+        const [newsRes, brandsRes] = await Promise.all([
+          fetch('/api/news'),
+          fetch('/api/brands')
+        ]);
+
+        const newsData = await newsRes.json();
+        const brandsData = await brandsRes.json();
+
+        // 如果云端有数据，就覆盖本地；否则保持空或默认
+        if (Array.isArray(newsData) && newsData.length > 0) {
+          setNews(newsData);
+        }
+        if (Array.isArray(brandsData) && brandsData.length > 0) {
+          setCustomBrands(brandsData);
+        }
+      } catch (error) {
+        console.error("Failed to sync with cloud:", error);
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+
+    fetchCloudData();
+  }, []);
+
+  // 🟢 3. 辅助函数：保存到云端
+  const saveNewsToCloud = async (updatedNews: NewsItem[]) => {
+    setNews(updatedNews); // 先更新 UI
+    try {
+      await fetch('/api/news', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedNews)
+      });
+    } catch (err) {
+      console.error("Failed to save news:", err);
+    }
+  };
+
+  const saveBrandsToCloud = async (updatedBrands: string[]) => {
+    setCustomBrands(updatedBrands); // 先更新 UI
+    try {
+      await fetch('/api/brands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedBrands)
+      });
+    } catch (err) {
+      console.error("Failed to save brands:", err);
+    }
+  };
+
+  // Filter Logic (保持不变)
   const filteredNews = useMemo(() => {
     return news.filter(item => {
       const dateMatch = item.date >= filters.startDate && item.date <= filters.endDate;
@@ -43,44 +110,54 @@ function App() {
   const handleAddNews = (itemData: Omit<NewsItem, 'id'>) => {
     const newId = Math.random().toString(36).substring(2, 9);
     
-    // If image is provided in itemData, use it, otherwise fallback (though EntryForm should provide it now)
     const newItem: NewsItem = {
       ...itemData,
       id: newId,
       image: itemData.image || `https://image.pollinations.ai/prompt/${encodeURIComponent(itemData.brand + ' car')}?nologo=true`
     };
     
-    // Check if brand exists, if not add to custom brands
+    // 🟢 逻辑更新：如果有新品牌，同时保存品牌和新闻
+    let newBrandsList = customBrands;
     if (!customBrands.includes(itemData.brand)) {
-        setCustomBrands(prev => [...prev, itemData.brand]);
+        newBrandsList = [...customBrands, itemData.brand];
+        saveBrandsToCloud(newBrandsList); // 同步品牌
     }
 
-    setNews(prev => [newItem, ...prev]);
+    // 🟢 逻辑更新：保存新闻到云端
+    const newNewsList = [newItem, ...news];
+    saveNewsToCloud(newNewsList);
+    
     setActiveTab('feed');
   };
 
   const handleDeleteNews = (id: string) => {
-    if (confirm('确定要删除这条情报吗？')) {
-      setNews(prev => prev.filter(item => item.id !== id));
+    if (confirm('确定要删除这条情报吗？(该操作会同步给所有同事)')) {
+      // 🟢 逻辑更新：同步删除操作
+      const updatedList = news.filter(item => item.id !== id);
+      saveNewsToCloud(updatedList);
     }
   };
 
   const handleAddBrand = (brand: string) => {
     if (!customBrands.includes(brand)) {
-      setCustomBrands(prev => [...prev, brand]);
+      // 🟢 逻辑更新：同步新增品牌
+      const updatedBrands = [...customBrands, brand];
+      saveBrandsToCloud(updatedBrands);
     }
   };
 
   const handleRemoveBrand = (brand: string) => {
-    setCustomBrands(prev => prev.filter(b => b !== brand));
-    // Also remove from selected filters if it's there
+    // 🟢 逻辑更新：同步删除品牌
+    const updatedBrands = customBrands.filter(b => b !== brand);
+    saveBrandsToCloud(updatedBrands);
+
     setFilters(prev => ({
       ...prev,
       selectedBrands: prev.selectedBrands.filter(b => b !== brand)
     }));
   };
 
-  // Stats
+  // Stats (保持不变)
   const stats = useMemo(() => {
     if (news.length === 0) return { count: 0, topBrand: 'N/A', latest: 'N/A', sources: 0 };
     
@@ -120,8 +197,11 @@ function App() {
           
           {/* Top Stats Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-red-500">
-              <p className="text-xs text-slate-400 uppercase font-semibold">当前情报数</p>
+            {/* 🟢 加了一个同步状态提示 */}
+            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-red-500 relative">
+              <p className="text-xs text-slate-400 uppercase font-semibold flex items-center justify-between">
+                当前情报数 {isSyncing && <LoadingIcon />}
+              </p>
               <p className="text-2xl font-bold text-slate-800">{stats.count} 条</p>
             </div>
             <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-orange-500">
@@ -168,7 +248,13 @@ function App() {
           <div className="min-h-[500px]">
             {activeTab === 'feed' ? (
               <div className="space-y-2">
-                {filteredNews.length > 0 ? (
+                {/* 🟢 加载状态显示 */}
+                {isSyncing && news.length === 0 ? (
+                    <div className="text-center py-20">
+                        <LoadingIcon /> 
+                        <span className="ml-2 text-slate-500">正在从云端同步数据...</span>
+                    </div>
+                ) : filteredNews.length > 0 ? (
                   filteredNews.map(item => (
                     <NewsCard key={item.id} item={item} onDelete={handleDeleteNews} />
                   ))
@@ -179,7 +265,7 @@ function App() {
                         onClick={() => setFilters({
                             startDate: defaultStartDate,
                             endDate: defaultEndDate,
-                            selectedBrands: customBrands,
+                            selectedBrands: [], // Reset to empty to match logic
                             selectedTypes: NEWS_TYPES_LIST,
                             searchQuery: ''
                         })}

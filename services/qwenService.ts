@@ -1,3 +1,4 @@
+// 文件路径: src/services/qwenService.ts
 import { NewsType } from "../types";
 import { DEFAULT_BRANDS } from "../constants";
 
@@ -12,8 +13,6 @@ export interface ExtractedNewsData {
 }
 
 export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsData> => {
-  
-  // 提示词定义 (保持不变)
   const systemPrompt = `
     You are an expert automotive news analyst. Extract structured data into STRICT JSON format.
     No markdown blocks.
@@ -30,43 +29,35 @@ export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsDa
   `;
 
   try {
-    // ✅ 修改点：不再直接请求阿里云，而是请求我们自己的后端 API
-    // Vercel 会自动把 /api/analyze 路由映射到刚才那个文件
+    // ✅ 请求我们自己的 Vercel 后端
     const response = await fetch("/api/analyze", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        text: text,
-        prompt: systemPrompt
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, prompt: systemPrompt })
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `请求失败: ${response.status}`);
+      const errText = await response.text();
+      throw new Error(`Request failed: ${errText}`);
     }
 
     const data = await response.json();
-    
-    // 解析阿里云的返回结构
     const rawContent = data.output?.choices?.[0]?.message?.content || "";
-    if (!rawContent) {
-      throw new Error("AI 返回内容为空");
+
+    if (!rawContent) throw new Error("AI returned empty content");
+
+    // 🧹 JSON 清洗逻辑
+    let cleanJson = rawContent.replace(/```json/gi, "").replace(/```/g, "").trim();
+    const firstOpen = cleanJson.indexOf("{");
+    const lastClose = cleanJson.lastIndexOf("}");
+    if (firstOpen !== -1 && lastClose !== -1) {
+      cleanJson = cleanJson.substring(firstOpen, lastClose + 1);
     }
 
-    // JSON 清洗
-    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-    const jsonString = jsonMatch ? jsonMatch[0] : rawContent;
-    
-    return JSON.parse(jsonString) as ExtractedNewsData;
+    return JSON.parse(cleanJson) as ExtractedNewsData;
 
   } catch (error) {
-    console.error("Analysis Failed:", error);
+    console.error("Qwen Service Error:", error);
     throw error;
   }
 };
-
-// 保持兼容性
-export const analyzeTextWithGemini = analyzeTextWithQwen;

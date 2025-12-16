@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search } from 'lucide-react'; // 引入搜索图标
+import { Search } from 'lucide-react'; 
 import Sidebar from './components/Sidebar';
 import NewsCard from './components/NewsCard';
 import EntryForm from './components/EntryForm';
@@ -15,7 +15,7 @@ const LoadingIcon = () => (
 );
 
 function App() {
-  // 🟢 1. 状态管理
+  // 1. 状态管理
   const [news, setNews] = useState<NewsItem[]>([]);
   const [customBrands, setCustomBrands] = useState<string[]>(DEFAULT_BRANDS);
   const [isSyncing, setIsSyncing] = useState(true);
@@ -29,25 +29,31 @@ function App() {
     endDate: defaultEndDate,
     selectedBrands: [],
     selectedTypes: NEWS_TYPES_LIST,
-    searchQuery: '' // 搜索关键词
+    searchQuery: ''
   });
 
   const [activeTab, setActiveTab] = useState<'feed' | 'entry'>('feed');
 
-  // 🟢 2. 启动时：从云端同步数据 (News + Brands)
+  // 🟢 核心修复：useEffect 加载数据时禁用缓存
   useEffect(() => {
     const fetchCloudData = async () => {
       try {
         setIsSyncing(true);
+        
+        // 定义防缓存的请求头
+        const headers = { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' };
+        
+        // 关键：URL 末尾加上时间戳 ?t=... 强制浏览器发起新请求，不走缓存
         const [newsRes, brandsRes] = await Promise.all([
-          fetch('/api/news'),
-          fetch('/api/brands')
+          fetch(`/api/news?t=${Date.now()}`, { headers }),
+          fetch(`/api/brands?t=${Date.now()}`, { headers })
         ]);
 
         const newsData = await newsRes.json();
         const brandsData = await brandsRes.json();
 
-        if (Array.isArray(newsData) && newsData.length > 0) setNews(newsData);
+        // 只有当获取到有效数组时才覆盖本地，防止空数据覆盖
+        if (Array.isArray(newsData)) setNews(newsData);
         if (Array.isArray(brandsData) && brandsData.length > 0) setCustomBrands(brandsData);
         
       } catch (error) {
@@ -56,10 +62,12 @@ function App() {
         setIsSyncing(false);
       }
     };
+    
+    // 组件挂载时执行
     fetchCloudData();
-  }, []);
+  }, []); 
 
-  // 🟢 3. 云端保存逻辑
+  // 保存新闻到云端
   const saveNewsToCloud = async (updatedNews: NewsItem[]) => {
     setNews(updatedNews);
     try {
@@ -71,6 +79,7 @@ function App() {
     } catch (err) { console.error("Save news error:", err); }
   };
 
+  // 保存品牌到云端
   const saveBrandsToCloud = async (updatedBrands: string[]) => {
     setCustomBrands(updatedBrands);
     try {
@@ -82,14 +91,13 @@ function App() {
     } catch (err) { console.error("Save brands error:", err); }
   };
 
-  // 🟢 4. 筛选与搜索逻辑
+  // 筛选与搜索逻辑
   const filteredNews = useMemo(() => {
     return news.filter(item => {
       const dateMatch = item.date >= filters.startDate && item.date <= filters.endDate;
       const brandMatch = filters.selectedBrands.length === 0 || filters.selectedBrands.includes(item.brand);
       const typeMatch = filters.selectedTypes.length === 0 || filters.selectedTypes.includes(item.type);
       
-      // 🔍 搜索匹配逻辑 (标题 或 摘要)
       const searchLower = filters.searchQuery.toLowerCase();
       const searchMatch = !filters.searchQuery || 
                           item.title.toLowerCase().includes(searchLower) || 
@@ -108,14 +116,12 @@ function App() {
       image: itemData.image || `https://image.pollinations.ai/prompt/${encodeURIComponent(itemData.brand + ' car')}?nologo=true`
     };
     
-    // 自动同步新品牌
     let newBrandsList = customBrands;
     if (!customBrands.includes(itemData.brand)) {
         newBrandsList = [...customBrands, itemData.brand];
         saveBrandsToCloud(newBrandsList);
     }
 
-    // 自动同步新闻
     const newNewsList = [newItem, ...news];
     saveNewsToCloud(newNewsList);
     setActiveTab('feed');
@@ -159,7 +165,6 @@ function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      {/* 侧边栏 */}
       <Sidebar 
         filters={filters} 
         setFilters={setFilters} 
@@ -169,11 +174,9 @@ function App() {
         onRemoveBrand={handleRemoveBrand}
       />
       
-      {/* 主内容区 */}
       <main className="flex-1 ml-72 h-full overflow-y-auto">
         <div className="max-w-5xl mx-auto p-8">
           
-          {/* 统计卡片 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-red-500 relative overflow-hidden">
                <div className="flex justify-between items-start">
@@ -198,7 +201,6 @@ function App() {
             </div>
           </div>
 
-          {/* 导航 Tab */}
           <div className="mb-6 border-b border-slate-200">
             <nav className="flex space-x-8">
               <button
@@ -224,12 +226,10 @@ function App() {
             </nav>
           </div>
 
-          {/* 内容展示区 */}
           <div className="min-h-[500px]">
             {activeTab === 'feed' ? (
               <div className="space-y-4">
-                
-                {/* 🔍 新增：顶部搜索栏 */}
+                {/* 搜索栏 */}
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Search className="h-5 w-5 text-slate-400" />
@@ -272,7 +272,6 @@ function App() {
                 )}
               </div>
             ) : (
-              // 🟢 关键修复：把 customBrands 传给 EntryForm
               <EntryForm 
                 onAdd={handleAddNews} 
                 availableBrands={customBrands} 

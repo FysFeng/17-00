@@ -1,39 +1,40 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { Search } from 'lucide-react'; // 引入搜索图标
 import Sidebar from './components/Sidebar';
 import NewsCard from './components/NewsCard';
 import EntryForm from './components/EntryForm';
 import { DEFAULT_BRANDS, NEWS_TYPES_LIST } from './constants';
 import { NewsItem, FilterState } from './types';
 
-// 简单的加载图标
+// 加载动画组件
 const LoadingIcon = () => (
-  <svg className="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+  <svg className="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
   </svg>
 );
 
 function App() {
-  // 🟢 1. 状态初始化：默认为空数组，等待从云端加载
+  // 🟢 1. 状态管理
   const [news, setNews] = useState<NewsItem[]>([]);
   const [customBrands, setCustomBrands] = useState<string[]>(DEFAULT_BRANDS);
-  const [isSyncing, setIsSyncing] = useState(true); // 是否正在同步中
-  
-  // Date calculation for default filter (Last 30 days)
+  const [isSyncing, setIsSyncing] = useState(true);
+
+  // 默认筛选时间范围：最近30天
   const defaultEndDate = new Date().toISOString().split('T')[0];
   const defaultStartDate = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
 
   const [filters, setFilters] = useState<FilterState>({
     startDate: defaultStartDate,
     endDate: defaultEndDate,
-    selectedBrands: [], // 默认全选/不选
+    selectedBrands: [],
     selectedTypes: NEWS_TYPES_LIST,
-    searchQuery: ''
+    searchQuery: '' // 搜索关键词
   });
 
   const [activeTab, setActiveTab] = useState<'feed' | 'entry'>('feed');
 
-  // 🟢 2. 核心逻辑：网页启动时，从 Vercel 云端下载数据
+  // 🟢 2. 启动时：从云端同步数据 (News + Brands)
   useEffect(() => {
     const fetchCloudData = async () => {
       try {
@@ -46,57 +47,49 @@ function App() {
         const newsData = await newsRes.json();
         const brandsData = await brandsRes.json();
 
-        // 如果云端有数据，就覆盖本地；否则保持空或默认
-        if (Array.isArray(newsData) && newsData.length > 0) {
-          setNews(newsData);
-        }
-        if (Array.isArray(brandsData) && brandsData.length > 0) {
-          setCustomBrands(brandsData);
-        }
+        if (Array.isArray(newsData) && newsData.length > 0) setNews(newsData);
+        if (Array.isArray(brandsData) && brandsData.length > 0) setCustomBrands(brandsData);
+        
       } catch (error) {
-        console.error("Failed to sync with cloud:", error);
+        console.error("Cloud sync failed:", error);
       } finally {
         setIsSyncing(false);
       }
     };
-
     fetchCloudData();
   }, []);
 
-  // 🟢 3. 辅助函数：保存到云端
+  // 🟢 3. 云端保存逻辑
   const saveNewsToCloud = async (updatedNews: NewsItem[]) => {
-    setNews(updatedNews); // 先更新 UI
+    setNews(updatedNews);
     try {
       await fetch('/api/news', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedNews)
       });
-    } catch (err) {
-      console.error("Failed to save news:", err);
-    }
+    } catch (err) { console.error("Save news error:", err); }
   };
 
   const saveBrandsToCloud = async (updatedBrands: string[]) => {
-    setCustomBrands(updatedBrands); // 先更新 UI
+    setCustomBrands(updatedBrands);
     try {
       await fetch('/api/brands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedBrands)
       });
-    } catch (err) {
-      console.error("Failed to save brands:", err);
-    }
+    } catch (err) { console.error("Save brands error:", err); }
   };
 
-  // Filter Logic (保持不变)
+  // 🟢 4. 筛选与搜索逻辑
   const filteredNews = useMemo(() => {
     return news.filter(item => {
       const dateMatch = item.date >= filters.startDate && item.date <= filters.endDate;
       const brandMatch = filters.selectedBrands.length === 0 || filters.selectedBrands.includes(item.brand);
       const typeMatch = filters.selectedTypes.length === 0 || filters.selectedTypes.includes(item.type);
       
+      // 🔍 搜索匹配逻辑 (标题 或 摘要)
       const searchLower = filters.searchQuery.toLowerCase();
       const searchMatch = !filters.searchQuery || 
                           item.title.toLowerCase().includes(searchLower) || 
@@ -109,30 +102,27 @@ function App() {
   // Actions
   const handleAddNews = (itemData: Omit<NewsItem, 'id'>) => {
     const newId = Math.random().toString(36).substring(2, 9);
-    
     const newItem: NewsItem = {
       ...itemData,
       id: newId,
       image: itemData.image || `https://image.pollinations.ai/prompt/${encodeURIComponent(itemData.brand + ' car')}?nologo=true`
     };
     
-    // 🟢 逻辑更新：如果有新品牌，同时保存品牌和新闻
+    // 自动同步新品牌
     let newBrandsList = customBrands;
     if (!customBrands.includes(itemData.brand)) {
         newBrandsList = [...customBrands, itemData.brand];
-        saveBrandsToCloud(newBrandsList); // 同步品牌
+        saveBrandsToCloud(newBrandsList);
     }
 
-    // 🟢 逻辑更新：保存新闻到云端
+    // 自动同步新闻
     const newNewsList = [newItem, ...news];
     saveNewsToCloud(newNewsList);
-    
     setActiveTab('feed');
   };
 
   const handleDeleteNews = (id: string) => {
-    if (confirm('确定要删除这条情报吗？(该操作会同步给所有同事)')) {
-      // 🟢 逻辑更新：同步删除操作
+    if (confirm('确定要删除吗？(将同步删除)')) {
       const updatedList = news.filter(item => item.id !== id);
       saveNewsToCloud(updatedList);
     }
@@ -140,49 +130,36 @@ function App() {
 
   const handleAddBrand = (brand: string) => {
     if (!customBrands.includes(brand)) {
-      // 🟢 逻辑更新：同步新增品牌
-      const updatedBrands = [...customBrands, brand];
-      saveBrandsToCloud(updatedBrands);
+      saveBrandsToCloud([...customBrands, brand]);
     }
   };
 
   const handleRemoveBrand = (brand: string) => {
-    // 🟢 逻辑更新：同步删除品牌
-    const updatedBrands = customBrands.filter(b => b !== brand);
-    saveBrandsToCloud(updatedBrands);
-
+    saveBrandsToCloud(customBrands.filter(b => b !== brand));
     setFilters(prev => ({
       ...prev,
       selectedBrands: prev.selectedBrands.filter(b => b !== brand)
     }));
   };
 
-  // Stats (保持不变)
+  // 统计数据
   const stats = useMemo(() => {
     if (news.length === 0) return { count: 0, topBrand: 'N/A', latest: 'N/A', sources: 0 };
-    
     const brandCounts: Record<string, number> = {};
     const sources = new Set<string>();
     let latestDate = '';
-
     news.forEach(item => {
         brandCounts[item.brand] = (brandCounts[item.brand] || 0) + 1;
         sources.add(item.source);
         if (!latestDate || item.date > latestDate) latestDate = item.date;
     });
-
     const topBrand = Object.entries(brandCounts).sort((a,b) => b[1] - a[1])[0]?.[0] || 'N/A';
-
-    return {
-        count: news.length,
-        topBrand,
-        latest: latestDate,
-        sources: sources.size
-    };
+    return { count: news.length, topBrand, latest: latestDate, sources: sources.size };
   }, [news]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* 侧边栏 */}
       <Sidebar 
         filters={filters} 
         setFilters={setFilters} 
@@ -192,67 +169,85 @@ function App() {
         onRemoveBrand={handleRemoveBrand}
       />
       
-      <main className="flex-1 ml-72 h-full overflow-y-auto bg-slate-50">
+      {/* 主内容区 */}
+      <main className="flex-1 ml-72 h-full overflow-y-auto">
         <div className="max-w-5xl mx-auto p-8">
           
-          {/* Top Stats Cards */}
+          {/* 统计卡片 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            {/* 🟢 加了一个同步状态提示 */}
-            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-red-500 relative">
-              <p className="text-xs text-slate-400 uppercase font-semibold flex items-center justify-between">
-                当前情报数 {isSyncing && <LoadingIcon />}
-              </p>
-              <p className="text-2xl font-bold text-slate-800">{stats.count} 条</p>
+            <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-red-500 relative overflow-hidden">
+               <div className="flex justify-between items-start">
+                  <div>
+                    <p className="text-xs text-slate-400 uppercase font-semibold">当前情报</p>
+                    <p className="text-2xl font-bold text-slate-800">{stats.count} 条</p>
+                  </div>
+                  {isSyncing && <LoadingIcon />}
+               </div>
             </div>
-            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-orange-500">
+            <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-orange-500">
               <p className="text-xs text-slate-400 uppercase font-semibold">活跃品牌</p>
               <p className="text-2xl font-bold text-slate-800 truncate">{stats.topBrand}</p>
             </div>
-            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500">
-              <p className="text-xs text-slate-400 uppercase font-semibold">最新情报</p>
-              <p className="text-2xl font-bold text-slate-800 text-sm md:text-xl">{stats.latest}</p>
+            <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-blue-500">
+              <p className="text-xs text-slate-400 uppercase font-semibold">最新更新</p>
+              <p className="text-2xl font-bold text-slate-800 text-lg">{stats.latest}</p>
             </div>
-            <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-purple-500">
-              <p className="text-xs text-slate-400 uppercase font-semibold">来源覆盖</p>
-              <p className="text-2xl font-bold text-slate-800">{stats.sources}</p>
+            <div className="bg-white p-4 rounded-xl shadow-sm border-l-4 border-purple-500">
+              <p className="text-xs text-slate-400 uppercase font-semibold">情报来源</p>
+              <p className="text-2xl font-bold text-slate-800">{stats.sources} 个</p>
             </div>
           </div>
 
-          {/* Tab Navigation */}
+          {/* 导航 Tab */}
           <div className="mb-6 border-b border-slate-200">
             <nav className="flex space-x-8">
               <button
                 onClick={() => setActiveTab('feed')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors ${
                   activeTab === 'feed'
-                    ? 'border-red-500 text-red-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                    ? 'border-red-600 text-red-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
                 }`}
               >
-                📅 情报时间线 (Feed)
+                📅 情报时间线
               </button>
               <button
                 onClick={() => setActiveTab('entry')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors ${
                   activeTab === 'entry'
-                    ? 'border-red-500 text-red-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                    ? 'border-red-600 text-red-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'
                 }`}
               >
-                📝 录入与分析 (Add News)
+                📝 录入与分析
               </button>
             </nav>
           </div>
 
-          {/* Content Area */}
+          {/* 内容展示区 */}
           <div className="min-h-[500px]">
             {activeTab === 'feed' ? (
-              <div className="space-y-2">
-                {/* 🟢 加载状态显示 */}
+              <div className="space-y-4">
+                
+                {/* 🔍 新增：顶部搜索栏 */}
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Search className="h-5 w-5 text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-xl leading-5 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 sm:text-sm shadow-sm transition-shadow"
+                    placeholder="搜索情报标题、摘要内容..."
+                    value={filters.searchQuery}
+                    onChange={(e) => setFilters(prev => ({ ...prev, searchQuery: e.target.value }))}
+                  />
+                </div>
+
+                {/* 列表内容 */}
                 {isSyncing && news.length === 0 ? (
                     <div className="text-center py-20">
-                        <LoadingIcon /> 
-                        <span className="ml-2 text-slate-500">正在从云端同步数据...</span>
+                        <div className="inline-block"><LoadingIcon /></div>
+                        <p className="mt-2 text-slate-500">正在同步云端数据...</p>
                     </div>
                 ) : filteredNews.length > 0 ? (
                   filteredNews.map(item => (
@@ -260,27 +255,30 @@ function App() {
                   ))
                 ) : (
                   <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
-                    <p className="text-slate-400 text-lg">📭 当前筛选范围内没有数据。</p>
+                    <p className="text-slate-400 text-lg">📭 没有找到相关情报。</p>
                     <button 
                         onClick={() => setFilters({
                             startDate: defaultStartDate,
                             endDate: defaultEndDate,
-                            selectedBrands: [], // Reset to empty to match logic
+                            selectedBrands: [],
                             selectedTypes: NEWS_TYPES_LIST,
                             searchQuery: ''
                         })}
                         className="mt-4 text-red-500 font-medium hover:underline"
                     >
-                        重置筛选
+                        清除筛选条件
                     </button>
                   </div>
                 )}
               </div>
             ) : (
-              <EntryForm onAdd={handleAddNews} />
+              // 🟢 关键修复：把 customBrands 传给 EntryForm
+              <EntryForm 
+                onAdd={handleAddNews} 
+                availableBrands={customBrands} 
+              />
             )}
           </div>
-
         </div>
       </main>
     </div>

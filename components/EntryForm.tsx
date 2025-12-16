@@ -1,22 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NewsItem, NewsType } from '../types';
 import { DEFAULT_BRANDS, NEWS_TYPES_LIST, NEWS_TYPE_LABELS } from '../constants';
 import { analyzeTextWithQwen } from '../services/qwenService';
 
 interface EntryFormProps {
   onAdd: (item: Omit<NewsItem, 'id'>) => void;
+  // 🟢 改动1: 接收从 App.tsx 传来的动态品牌列表
+  availableBrands: string[]; 
 }
 
-const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
+// 🟢 改动2: 解构出 availableBrands
+const EntryForm: React.FC<EntryFormProps> = ({ onAdd, availableBrands }) => {
   const [activeTab, setActiveTab] = useState<'manual' | 'ai'>('ai');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🟢 改动3: 计算最终要显示的品牌列表
+  // 如果父组件传来了品牌(云端的)，就用传来的；如果没传(还在加载)，就用默认的兜底
+  const brandOptions = availableBrands && availableBrands.length > 0 ? availableBrands : DEFAULT_BRANDS;
 
   // Manual Form State
   const [formData, setFormData] = useState({
     title: '',
     summary: '',
-    brand: DEFAULT_BRANDS[0],
+    brand: brandOptions[0], // 🟢 改动4: 默认选中动态列表的第一个
     type: NewsType.OTHER,
     date: new Date().toISOString().split('T')[0],
     url: '',
@@ -24,9 +31,17 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
     image: ''
   });
 
+  // 🟢 改动5: 监听 brandOptions 变化
+  // 如果云端数据加载晚了，确保 formData 里的 brand 更新为合法值
+  useEffect(() => {
+    if (brandOptions.length > 0 && !brandOptions.includes(formData.brand)) {
+        setFormData(prev => ({ ...prev, brand: brandOptions[0] }));
+    }
+  }, [brandOptions]);
+
   // AI Form State
   const [aiText, setAiText] = useState('');
-  const [aiImageInput, setAiImageInput] = useState(''); // New state for AI tab image URL
+  const [aiImageInput, setAiImageInput] = useState(''); 
 
   const generateImageUrl = (prompt: string) => {
     return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=600&nologo=true&seed=${Math.floor(Math.random()*1000)}`;
@@ -35,7 +50,6 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // If no image URL provided, generate one from title/brand
     const finalImage = formData.image.trim() || generateImageUrl(`${formData.brand} ${formData.title} automotive`);
 
     onAdd({
@@ -43,7 +57,6 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
         image: finalImage
     });
 
-    // Reset essential fields
     setFormData(prev => ({ ...prev, title: '', summary: '', url: '', image: '' }));
   };
 
@@ -54,29 +67,27 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
     setError(null);
     
     try {
-      // Switched to Qwen (DashScope)
       const result = await analyzeTextWithQwen(aiText);
       
-      // Determine image: 
-      // 1. Use user pasted URL in AI tab if available
-      // 2. Else use AI generated keyword image
       const finalImage = aiImageInput.trim() 
         ? aiImageInput.trim() 
         : generateImageUrl(result.image_keywords || `${result.brand} car news`);
       
+      // 🟢 如果 AI 分析出的品牌是新的，App.tsx 的 handleAddNews 会自动处理同步逻辑
+      // 我们这里只需要传出去即可
       onAdd({
         title: result.title,
         summary: result.summary,
         brand: result.brand,
-        type: result.type as NewsType, // Ensure type cast
+        type: result.type as NewsType,
         date: result.date,
         url: result.url,
         source: 'AI 智能提取 (Qwen)',
         image: finalImage
       });
       
-      setAiText(''); // Clear input on success
-      setAiImageInput(''); // Clear image input
+      setAiText(''); 
+      setAiImageInput(''); 
       
     } catch (err: any) {
       console.error("Analysis Error:", err);
@@ -181,12 +192,13 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase mb-1">品牌</label>
+                {/* 🟢 改动6: 使用 brandOptions 渲染下拉菜单 */}
                 <select 
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-red-500"
                   value={formData.brand}
                   onChange={(e) => setFormData({...formData, brand: e.target.value})}
                 >
-                  {DEFAULT_BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
+                  {brandOptions.map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
               
@@ -250,8 +262,8 @@ const EntryForm: React.FC<EntryFormProps> = ({ onAdd }) => {
                     />
                 </div>
                 <div>
-                     <label className="block text-xs font-medium text-slate-500 uppercase mb-1">图片链接 (可选 - 粘贴新闻原图)</label>
-                     <textarea 
+                      <label className="block text-xs font-medium text-slate-500 uppercase mb-1">图片链接 (可选 - 粘贴新闻原图)</label>
+                      <textarea 
                         className="w-full p-2.5 border border-slate-300 rounded-lg text-sm h-24 resize-none focus:ring-2 focus:ring-red-500"
                         placeholder="https://example.com/image.jpg (留空则根据标题生成)"
                         value={formData.image}

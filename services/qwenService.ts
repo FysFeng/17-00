@@ -12,46 +12,45 @@ export interface ExtractedNewsData {
 }
 
 /**
- * Call Alibaba Cloud DashScope API (Qwen-Plus)
+ * 调用阿里云 DashScope API (通义千问 Qwen-Plus)
  */
 export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsData> => {
-  // Try to get key from Vite env (client) or Process env (server/build)
-  // Casting import.meta to any to avoid TypeScript error "Property 'env' does not exist on type 'ImportMeta'"
-  const apiKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || process.env.DASHSCOPE_API_KEY;
+  
+  // ============================================================
+  // 🔴【关键】请在这里填入你的阿里云 API Key (sk-开头)
+  // ============================================================
+  const apiKey = 'sk-d7416c81de7f4c9d983c6c05793168e7'; 
+  // ============================================================
 
-  if (!apiKey) {
-    console.error("DashScope API Key is missing.");
-    throw new Error("请配置 VITE_DASHSCOPE_API_KEY 环境变量");
+  if (!apiKey || apiKey.includes('xxxx')) {
+    console.error("API Key 未配置");
+    throw new Error("请在代码中填入正确的阿里云 API Key");
   }
 
-  const modelName = 'qwen-plus'; // qwen-plus is balanced for performance and cost
+  // qwen-plus 是性价比最高的模型，适合长文本分析
+  const modelName = 'qwen-plus'; 
 
   const systemPrompt = `
     You are an expert automotive news analyst. Your task is to extract structured data from the provided text.
     
     Output Format:
-    You must return STRICT JSON format only. Do not include markdown code blocks (like \`\`\`json).
+    You must return STRICT JSON format only. Do not include markdown code blocks.
     
     The JSON structure must be:
     {
       "title": "Concise headline in Chinese",
       "summary": "2-3 sentences summary in Chinese",
-      "brand": "Primary brand (e.g., Toyota, BYD, Tesla, or Other)",
-      "type": "One of: New Car Launch, Policy & Regulation, Market Sales, Personnel Changes, Competitor Dynamics, Other",
-      "date": "YYYY-MM-DD (use today's date if not found)",
+      "brand": "Primary brand (Priority selection: ${DEFAULT_BRANDS.join(', ')}). If not found, use 'Other'.",
+      "type": "One of: ${Object.values(NewsType).join(', ')}",
+      "date": "YYYY-MM-DD (use today's date ${new Date().toISOString().split('T')[0]} if not explicit)",
       "url": "Relevant URL if found, else empty string",
-      "image_keywords": "3-6 English keywords for image generation (e.g. 'BYD electric suv desert')"
+      "image_keywords": "3-6 English keywords for image generation"
     }
-    
-    Valid Brands: ${DEFAULT_BRANDS.join(', ')}.
-    Valid Types: ${Object.values(NewsType).join(', ')}.
-    
-    If the date is missing, use: ${new Date().toISOString().split('T')[0]}.
   `;
 
-  const userPrompt = `News Text: ${text}`;
-
   try {
+    console.log("正在调用通义千问 API...");
+
     const response = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation", {
       method: "POST",
       headers: {
@@ -63,12 +62,12 @@ export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsDa
         input: {
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
+            { role: "user", content: `News Text: ${text}` }
           ]
         },
         parameters: {
-          result_format: "message",
-          temperature: 0.1, // Low temperature for consistent extraction
+          result_format: "message", // 强制返回 message 格式，兼容 OpenAI 风格
+          temperature: 0.1,         // 低温度，保证输出稳定
           top_p: 0.8
         }
       })
@@ -77,21 +76,26 @@ export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsDa
     if (!response.ok) {
       const errorData = await response.json();
       console.error("DashScope API Error:", errorData);
-      throw new Error(errorData.message || `API Request Failed: ${response.status}`);
+      throw new Error(errorData.message || `API 请求失败: ${response.status}`);
     }
 
     const data = await response.json();
     
-    // Parse the content
+    // 解析返回内容
     const rawContent = data.output?.choices?.[0]?.message?.content || "";
     if (!rawContent) {
-      throw new Error("Empty response from AI");
+      throw new Error("AI 返回了空内容");
     }
 
-    // Cleanup potential markdown fences if the model ignores the "no markdown" instruction
-    const jsonString = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+    // ✅【优化】强力 JSON 提取器
+    // 有时候 AI 会返回 "```json {...} ```" 或者 "Here is the result: {...}"
+    // 我们只提取第一个 '{' 和最后一个 '}' 之间的内容
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : rawContent;
     
     const parsedData = JSON.parse(jsonString) as ExtractedNewsData;
+    console.log("✅ 千问分析成功！");
+    
     return parsedData;
 
   } catch (error) {
@@ -99,3 +103,6 @@ export const analyzeTextWithQwen = async (text: string): Promise<ExtractedNewsDa
     throw error;
   }
 };
+
+// 为了兼容你原来的代码调用习惯，我们可以把原来导出的名字指向这个新函数
+export const analyzeTextWithGemini = analyzeTextWithQwen;
